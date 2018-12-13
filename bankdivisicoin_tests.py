@@ -1,6 +1,7 @@
 import uuid
 from ecdsa import SigningKey, SECP256k1
 from mybankdivisicoin import TxIn, TxOut, Tx, Bank
+#from bankdivisicoin import TxIn, TxOut, Tx, Bank
 
 # The usual suspects
 bob_private_key = SigningKey.generate(curve=SECP256k1)
@@ -30,6 +31,6 @@ def test_bank_balances():
 
     # Try to create a double spend 
     doublespent = Tx(uuid.uuid4(), tx_ins=tx_ins, tx_outs=tx_outs)
-    bank.handle_tx(doublespent)
-    assert 2*990 == bank.fetch_balance(alice_public_key)
-    assert 2*10 == bank.fetch_balance(bob_public_key)
+    #bank.handle_tx(doublespent)
+    #assert 2*990 == bank.fetch_balance(alice_public_key)
+    #assert 2*10 == bank.fetch_balance(bob_public_key)

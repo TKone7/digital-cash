@@ -46,7 +46,7 @@ class Bank:
     def is_unspent(self, tx_in):
         for tx in self.txs.values():
             for _tx_in in tx.tx_ins:
-                if tx_in.tx_id == _tx_in.tx_id and tx_in.index == _tx_in.tx_id:
+                if tx_in.tx_id == _tx_in.tx_id and tx_in.index == _tx_in.index:
                     return False
 
         return True
@@ -81,7 +81,7 @@ class Bank:
         spent_pairs = [(tx_in.tx_id, tx_in.index) 
                         for tx in self.txs.values() 
                         for tx_in in tx.tx_ins]
-        # Return tx_outs associated with public_key and not in ^^ list
+# Return tx_outs associated with public_key and not in ^^ list
         return [tx_out for tx in self.txs.values() 
                    for i, tx_out in enumerate(tx.tx_outs)
                        if public_key.to_string() == tx_out.public_key.to_string()
