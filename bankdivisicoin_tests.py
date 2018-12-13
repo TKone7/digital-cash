@@ -25,6 +25,11 @@ def test_bank_balances():
     alice_to_bob = Tx(id=tx_id, tx_ins=tx_ins, tx_outs=tx_outs)
     alice_to_bob.sign_input(0, alice_private_key)
     bank.handle_tx(alice_to_bob)
-
     assert 990 == bank.fetch_balance(alice_public_key)
     assert 10 == bank.fetch_balance(bob_public_key)
+
+    # Try to create a double spend 
+    doublespent = Tx(uuid.uuid4(), tx_ins=tx_ins, tx_outs=tx_outs)
+    bank.handle_tx(doublespent)
+    assert 2*990 == bank.fetch_balance(alice_public_key)
+    assert 2*10 == bank.fetch_balance(bob_public_key)

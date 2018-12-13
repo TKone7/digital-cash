@@ -43,3 +43,4 @@ def test_valid_transfers():
     bank.observe_coin(coin)
     assert bank.fetch_coins(alice_public_key) == [coin]
     assert bank.fetch_coins(bob_public_key) == []
+
