@@ -101,7 +101,7 @@ class Bank:
 
     def fetch_utxo(self, public_key):
         return [utxo for utxo in self.utxo.values()
-                if utxo.public_key.to_string() == public_key.to_string()]
+                if utxo.public_key == public_key]
 
     def fetch_balance(self, public_key):
         # Fetch utxo associated with this public key
