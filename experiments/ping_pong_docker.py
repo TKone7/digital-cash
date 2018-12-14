@@ -14,10 +14,8 @@ logger = logging.getLogger(__name__)
 class TCPHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
-        # import pdb; pdb.set_trace()
         message_bytes = self.request.recv(10).strip()
-        peer = self.request.getpeername()
-        logger.info(f'Received {str(message_bytes)} from {peer}')
+        logger.info(f'Received {str(message_bytes)}')
         if message_bytes == b"ping":
             self.request.sendall(b"pong")
             logger.info(f'Sent b"pong"')

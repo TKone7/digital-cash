@@ -2,20 +2,19 @@ import socketserver, socket, random, os, threading, logging, re
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, os.environ.get('LOG_LEVEL', 'INFO')),
     format='%(asctime)-15s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
 
 ID = int(os.environ["ID"])
-PORT = 10000
-current = 2
+current = 0
 peer_hostnames = {p for p in os.environ['PEERS'].split(',')}
 
 
 def ping(hostname):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((hostname, 10000))
+        s.connect((hostname, 9999))
         s.sendall(b"ping")
         logger.info(f'Sent "ping" to "{hostname}"')
         data = s.recv(1000)
@@ -26,14 +25,12 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
     def peer(self):
         address = self.client_address[0]
-        logger.info(f"address: {address}")
         host_info = socket.gethostbyaddr(address)
-        logger.info(f"host: {host_info}")
         return re.search(r"_(.*?)_", host_info[0]).group(1)
 
     def handle(self):
-        message_bytes = self.request.recv(10)
-        logger.info(f'Received {str(message_bytes)} from "{self.peer()}"')
+        message_bytes = self.request.recv(1024*4).strip()
+        logger.info(f'Received {str(message_bytes)} from "{hostname}"')
         self.request.sendall(b"pong")
         logger.info(f'Sent b"pong" to "{self.peer()}"')
 
@@ -53,7 +50,7 @@ def schedule_ping():
 
 def main():
     schedule_ping()
-    server = socketserver.TCPServer(('0.0.0.0', 10000), TCPHandler)
+    server = socketserver.TCPServer(('0.0.0.0', 9999), TCPHandler)
     server.serve_forever()
 
 if __name__ == "__main__":

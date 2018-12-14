@@ -16,7 +16,7 @@ import uuid, socketserver, socket, sys, argparse
 from docopt import docopt
 from copy import deepcopy
 from ecdsa import SigningKey, SECP256k1
-from utils import serialize, deserialize, prepare_simple_tx
+from utils import serialize, deserialize
 
 from identities import user_public_key, user_private_key
 
@@ -141,12 +141,10 @@ class TCPHandler(socketserver.BaseRequestHandler):
         return self.request.sendall(serialize(response))
 
     def handle(self):
-        message_bytes = self.request.recv(5000).strip()
-        print(message_bytes)
+        message_bytes = self.request.recv(1000).strip()
         message = deserialize(message_bytes)
         command = message["command"]
         data = message["data"]
-        print(command)
 
         if command == "ping":
             self.respond(command="pong", data="")
@@ -166,7 +164,39 @@ class TCPHandler(socketserver.BaseRequestHandler):
             balance = bank.fetch_balance(data)
             self.respond(command="balance-response", data=balance)
 
-HOST, PORT = 'localhost', 9006
+
+def prepare_simple_tx(utxos, sender_private_key, recipient_public_key, amount):
+    sender_public_key = sender_private_key.get_verifying_key()
+
+    # Construct tx.tx_outs
+    tx_ins = []
+    tx_in_sum = 0
+    for tx_out in utxos:
+        tx_ins.append(TxIn(tx_id=tx_out.tx_id, index=tx_out.index, signature=None))
+        tx_in_sum += tx_out.amount
+        if tx_in_sum > amount:
+            break
+
+    # Make sure sender can afford it
+    assert tx_in_sum >= amount
+
+    # Construct tx.tx_outs
+    tx_id = uuid.uuid4()
+    change = tx_in_sum - amount
+    tx_outs = [
+        TxOut(tx_id=tx_id, index=0, amount=amount, public_key=recipient_public_key), 
+        TxOut(tx_id=tx_id, index=1, amount=change, public_key=sender_public_key),
+    ]
+
+    # Construct tx and sign inputs
+    tx = Tx(id=tx_id, tx_ins=tx_ins, tx_outs=tx_outs)
+    for i in range(len(tx.tx_ins)):
+        tx.sign_input(i, sender_private_key)
+
+    return tx
+
+
+HOST, PORT = 'localhost', 9002
 ADDRESS = (HOST, PORT)
 bank = Bank()
 
