@@ -28,32 +28,9 @@ def test_bank_balances():
     alice_to_bob = Tx(id=tx_id, tx_ins=tx_ins, tx_outs=tx_outs)
     alice_to_bob.sign_input(0, alice_private_key)
 
-    bank.handle_tx(alice_to_bob)
+    # After signing, Bob modifies transaction to get more $$$
+    alice_to_bob.tx_outs[1].public_key = bob_public_key
 
-    alice_balance = bank.fetch_balance(alice_public_key)
-    assert alice_balance == 990
-    
-    # Alice sends 10 coins to Bob
-    tx_ins = [
-        TxIn(tx_id=tx_id, index=1, signature=None),
-    ]
-    tx_id = uuid.uuid4()
-    tx_outs = [
-        TxOut(tx_id=tx_id, index=0, amount=10, public_key=bob_public_key), 
-        TxOut(tx_id=tx_id, index=1, amount=980, public_key=alice_public_key),
-    ]
-    alice_to_bob = Tx(id=tx_id, tx_ins=tx_ins, tx_outs=tx_outs)
-    alice_to_bob.sign_input(0, alice_private_key)
-    bank.handle_tx(alice_to_bob)
-    
-    alice_balance = bank.fetch_balance(alice_public_key)
-    assert alice_balance == 980
-def test_public_key_comparisons():
-    derived_bob_public_key = VerifyingKey.from_string(
-        bob_public_key.to_string(),
-        curve=SECP256k1,
-    )
+    with pytest.raises(BadSignatureError):
+        bank.handle_tx(alice_to_bob)
 
-    assert bob_public_key.to_string() == derived_bob_public_key.to_string()
-
-    assert bob_public_key == derived_bob_public_key

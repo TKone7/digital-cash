@@ -1,5 +1,4 @@
 import pickle, uuid
-
 def serialize(coin):
     return pickle.dumps(coin)
 

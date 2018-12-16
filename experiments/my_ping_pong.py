@@ -1,5 +1,4 @@
-import socketserver, socket 
-import sys 
+import socketserver, socket, sys 
 
 host = "0.0.0.0"
 port = 10000

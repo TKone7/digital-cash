@@ -1,4 +1,4 @@
-from uuid import uuid4
+import uuid 
 from copy import deepcopy
 from ecdsa import SigningKey, SECP256k1
 from utils import serialize
@@ -92,3 +92,4 @@ class Bank:
             if coin.transfers[-1].public_key.to_string() == public_key.to_string():
                coins.append(coin) 
         return coins
+
