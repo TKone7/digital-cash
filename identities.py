@@ -31,7 +31,7 @@ def bank_public_key(id):
 
 def airdrop_tx():
     import uuid
-    from blockcoin import TxOut, Tx
+    from myblockcoin import TxOut, Tx
     id = "1"
     tx = Tx(
         id=id, 
