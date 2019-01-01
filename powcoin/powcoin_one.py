@@ -1,11 +1,12 @@
 """
-POW Syndacoin
+POWCoin Part 1
+* Add code to simulate network latency and packet loss
 
 Usage:
-  pow_syndacoin.py.py serve
-  pow_syndacoin.py.py ping [--node <node>]
-  pow_syndacoin.py.py tx <from> <to> <amount> [--node <node>]
-  pow_syndacoin.py.py balance <name> [--node <node>]
+  powcoin_one.py serve
+  powcoin_one.py ping [--node <node>]
+  powcoin_one.py tx <from> <to> <amount> [--node <node>]
+  powcoin_one.py balance <name> [--node <node>]
 
 Options:
   -h --help      Show this screen.
@@ -98,17 +99,13 @@ class Block:
     def proof(self):
         return int(self.id, 16)
 
-    def __eq__(self, other):
-        return self.id == other.id
-
     def __repr__(self):
         return f"Block(prev_id={self.prev_id[:10]}... id={self.id[:10]}...)"
 
 class Node:
 
     def __init__(self, address):
-        self.chain = []
-        self.branches = []
+        self.blocks = []
         self.utxo_set = {}
         self.mempool = []
         self.peers = []
@@ -125,7 +122,7 @@ class Node:
                 logger.info(f'(handshake) Node {peer[0]} offline')
 
     def sync(self):
-        blocks = self.chain[-GET_BLOCKS_CHUNK:]
+        blocks = self.blocks[-GET_BLOCKS_CHUNK:]
         block_ids = [block.id for block in blocks]
         for peer in self.peers:
             send_message(peer, "sync", block_ids)
@@ -134,7 +131,7 @@ class Node:
         return [tx_out for tx_out in self.utxo_set.values() 
                 if tx_out.public_key == public_key]
 
-    def connect_tx(self, tx):
+    def update_utxo_set(self, tx):
         # Remove utxos that were just spent
         if not tx.is_coinbase:
             for tx_in in tx.tx_ins:
@@ -192,51 +189,33 @@ class Node:
             for peer in self.peers:
                 send_message(peer, "tx", tx)
 
-    def validate_block(self, block, validate_txns=False):
+    def validate_block(self, block):
         assert block.proof < POW_TARGET, "Insufficient Proof-of-Work"
-
-        if validate_txns:
-
-            # Validate coinbase separately
-            self.validate_coinbase(block.txns[0])
-
-            # Check the transactions are valid
-            for tx in block.txns[1:]:
-                self.validate_tx(tx)
+        assert block.prev_id == self.blocks[-1].id
 
     def handle_block(self, block):
-        # Ignore if we've already seen it
-        in_chain = block in self.chain
-        # TODO in_branch
-        if in_chain:
-            raise Exception("Duplicate")
+        # Check work, chain ordering
+        self.validate_block(block)
 
-        # Define conditions for if-statements below
-        extends_chain = block.prev_id == self.chain[-1].id
-        forks_chain = block.prev_id in [block.id for block in self.chain] 
+        # Validate coinbase separately
+        self.validate_coinbase(block.txns[0])
 
-        # Validate the block
-        self.validate_block(block, validate_txns=extends_chain)
+        # Check the transactions are valid
+        for tx in block.txns[1:]:
+            self.validate_tx(tx)
 
-        # Handle cases separately
-        if extends_chain:
-            self.connect_block(block)
-            logger.info(f"Extended chain to height {len(self.chain)-1}")
-        elif forks_chain:
-            self.branches.append([block])
-            logger.info(f"Created branch {len(self.branches)-1}")
+        # If they're all good, update self.blocks and self.utxo_set
+        for tx in block.txns:
+            self.update_utxo_set(tx)
+        
+        # Add the block to our chain
+        self.blocks.append(block)
+
+        logger.info(f"Block accepted: height={len(self.blocks) - 1}")
 
         # Block propogation
         for peer in self.peers:
             disrupt(func=send_message, args=[peer, "blocks", [block]])
-
-    def connect_block(self, block):
-        # Add the block to our chain
-        self.chain.append(block)
-
-        # If they're all good, update self.chain and self.utxo_set
-        for tx in block.txns:
-            self.connect_tx(tx)
 
 def prepare_simple_tx(utxos, sender_private_key, recipient_public_key, amount):
     sender_public_key = sender_private_key.get_verifying_key()
@@ -308,7 +287,7 @@ def mine_forever(public_key):
         coinbase = prepare_coinbase(public_key)
         unmined_block = Block(
             txns=[coinbase] + node.mempool,
-            prev_id=node.chain[-1].id,
+            prev_id=node.blocks[-1].id,
             nonce=random.randint(0, 1000000000),
         )
         mined_block = mine_block(unmined_block)
@@ -319,12 +298,13 @@ def mine_forever(public_key):
             with lock:
                 node.handle_block(mined_block)
 
-def mine_genesis_block(node, public_key):
+def mine_genesis_block(public_key):
+    global node
     coinbase = prepare_coinbase(public_key, tx_id="abc123")
     unmined_block = Block(txns=[coinbase], prev_id=None, nonce=0)
     mined_block = mine_block(unmined_block)
-    node.chain.append(mined_block)
-    node.connect_tx(coinbase)
+    node.blocks.append(mined_block)
+    node.update_utxo_set(coinbase)
 
 ##############
 # Networking #
@@ -419,11 +399,11 @@ class TCPHandler(socketserver.BaseRequestHandler):
             # Find our most recent block peer doesn't know about,
             # But which build off a block they do know about.
             peer_block_ids = data
-            for block in node.chain[::-1]:
+            for block in node.blocks[::-1]:
                 if block.id not in peer_block_ids \
                         and block.prev_id in peer_block_ids:
-                    height = node.chain.index(block)
-                    blocks = node.chain[height:height+GET_BLOCKS_CHUNK]
+                    height = node.blocks.index(block)
+                    blocks = node.blocks[height:height+GET_BLOCKS_CHUNK]
                     send_message(peer, "blocks", blocks)
                     logger.info('Served "sync" request')
                     return
@@ -498,7 +478,7 @@ def main(args):
         node = Node(address=(name, PORT))
 
         # Alice is Satoshi!
-        mine_genesis_block(node, lookup_public_key("alice"))
+        mine_genesis_block(lookup_public_key("alice"))
 
         # Start server thread
         server_thread = threading.Thread(target=serve, name="server")
