@@ -1,11 +1,11 @@
 """
-POW Synca-Coin
+POW P2P-Coin
 
 Usage:
-  my_pow_syndacoin.py serve
-  my_pow_syndacoin.py ping
-  my_pow_syndacoin.py tx <from> <to> <amount> [--node <node>]
-  my_pow_syndacoin.py balance <name> [--node <node>]
+  mypowp2pcoin.py serve
+  mypowp2pcoin.py ping
+  mypowp2pcoin.py tx <from> <to> <amount> [--node <node>]
+  mypowp2pcoin.py balance <name> [--node <node>]
 
 Options:
   -h --help     Show this screen.
@@ -25,25 +25,32 @@ import time
 import hashlib
 import random
 import re
+import pickle
 
 from docopt import docopt
 from copy import deepcopy
 from ecdsa import SigningKey, SECP256k1
-from utils import serialize, deserialize
 
 HOST, PORT = '0.0.0.0', 10000
 ADDRESS = (HOST, PORT)
+GET_BLOCK_CHUNKS = 10
 BLOCK_SUBSIDY = 50
+ENFORCE_AUTHENTICATION = False
 node = None
+lock = threading.Lock()
 
 logging.basicConfig(level="INFO", format='%(threadName)-6s | %(message)s')
 logger = logging.getLogger(__name__)
 
+def serialize(coin):
+    return pickle.dumps(coin)
+
+def deserialize(serialized):
+    return pickle.loads(serialized)
 
 def spend_message(tx, index):
     outpoint = tx.tx_ins[index].outpoint
     return serialize(outpoint) + serialize(tx.tx_outs)
-
 
 class Block:
 
@@ -140,6 +147,12 @@ class Node:
             except:
                 logger.info(f'(handshake) Node {peer[0]} offline')
 
+    def sync(self):
+        blocks = self.blocks[-GET_BLOCK_CHUNKS:]
+        block_ids = [block.id for block in blocks]
+        for peer in self.peers:
+            send_message(peer, "sync", block_ids)
+
     def update_utxo_set(self, tx, final):
         if final:
             if not tx.is_coinbase:
@@ -230,7 +243,7 @@ class Node:
         logger.info(f"Block accepted: height={len(self.blocks) - 1}")
         # TODO Block propagation
         for peer in self.peers:
-            send_message(peer, "block", block)
+            send_message(peer, "blocks", [block])
 
     def fetch_utxos(self, public_key, zero_conf):
         if zero_conf:
@@ -303,7 +316,7 @@ def prepare_coinbase(public_key, tx_id = None):
 ##########
 
 
-DIFFICULTY_BITS = 19
+DIFFICULTY_BITS = 18
 POW_TARGET = 2 ** (256 - DIFFICULTY_BITS)
 mining_interrupt = threading.Event()
 
@@ -330,7 +343,8 @@ def mine_forever(public_key):
         if mined_block:
             logger.info("")
             logger.info("Mined new Block")
-            node.handle_block(mined_block)
+            with lock:
+                node.handle_block(mined_block)
         else:
             logger.info("")
             logger.info("Mining Interrupted")
@@ -353,12 +367,27 @@ def mine_genesis_block(public_key):
 # Networking #
 ##############
 
+def read_message(s):
+    message = b''
+    # our protocol is first 4 bytes signify message length
+    raw_message_length = s.recv(4) or b"\x00"
+    message_length = int.from_bytes(raw_message_length, 'big')
+    while message_length > 0:
+        chunk = s.recv(1024)
+        message += chunk
+        message_length -= len(chunk)
+
+    return deserialize(message)
 
 def prepare_message(command, data):
-    return {
+    message = {
         "command": command,
         "data": data,
     }
+    serialized_message = serialize(message)
+    length = len(serialized_message).to_bytes(4, 'big')
+    return length + serialized_message
+
 
 
 class TCPHandler(socketserver.BaseRequestHandler):
@@ -373,11 +402,10 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
     def respond(self, command, data):
         response = prepare_message(command, data)
-        return self.request.sendall(serialize(response))
+        return self.request.sendall(response)
 
     def handle(self):
-        message_bytes = self.request.recv(1024 * 8).strip()
-        message = deserialize(message_bytes)
+        message = read_message(self.request)
         command = message["command"]
         data = message["data"]
 
@@ -403,9 +431,32 @@ class TCPHandler(socketserver.BaseRequestHandler):
                 send_message(peer, "peers", None)
         else:
             # we don't want to handle a message if he isn't connected to us
-            assert peer in node.peers, f"Rejecting {command} from unconnected {peer[0]}"
+            if ENFORCE_AUTHENTICATION:
+                assert peer in node.peers, f"Rejecting {command} from unconnected {peer[0]}"
 
         # Business logic
+
+        if command == "peers":
+            send_message(peer, "peers-response", node.peers)
+        if command == "peers-response":
+            for peer in data:
+                node.connect(peer)
+
+        if command == "sync":
+            # find our most recent block peer doesn't know about but builds off a block they do know about
+            peer_block_ids = data
+            for block in node.blocks[::-1]:
+                if block.id not in peer_block_ids \
+                        and block.prev_id in peer_block_ids:
+                    height = node.blocks.index(block)
+                    blocks = node.blocks[height:height+GET_BLOCK_CHUNKS]
+                    send_message(peer, "blocks", blocks)
+                    logger.info('Served "sync" request')
+                    return
+
+            logger.info('Couldn\'t serve "sync" request')
+
+
         if command == "ping":
             self.respond(command="pong", data="")
 
@@ -416,12 +467,17 @@ class TCPHandler(socketserver.BaseRequestHandler):
             except:
                 self.respond(command="tx-response", data="rejected")
 
-        if command == "block":
-            # handle only if it builds on the tip
-            if data.prev_id == node.blocks[-1].id:
-                node.handle_block(data)
-                # interrupt mining thread
-                mining_interrupt.set()
+        if command == "blocks":
+            for block in data:
+                try:
+                    with lock:
+                        node.handle_block(block)
+                    mining_interrupt.set()
+                except:
+                    logger.info(f"Rejected bad block")
+
+            if len(data) == GET_BLOCK_CHUNKS:
+                node.sync()
 
         if command == "utxos":
             balance = node.fetch_utxos(data, True)
@@ -442,10 +498,9 @@ def send_message(address, command, data, response=False):
     message = prepare_message(command, data)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect(address)
-        s.sendall(serialize(message))
+        s.sendall(message)
         if response:
-            return deserialize(s.recv(5000))
-
+            return read_message(s)
 
 def external_address(node):
     i = int(node[-1])
@@ -469,6 +524,9 @@ def main(args):
     threading.current_thread().name = "main"
     if args["serve"]:
         name = os.environ["NAME"]
+        duration = 30 * ["node0", "node1", "node2"].index(name)
+        time.sleep(duration)
+
         global node
         node = Node(address=(name, PORT))
 
@@ -483,6 +541,15 @@ def main(args):
         peers = [(p, PORT) for p in os.environ['PEERS'].split(',')]
         for peer in peers:
             node.connect(peer)
+
+        # wait for peer connection
+        time.sleep(1)
+
+        # Do initial block download
+        node.sync()
+
+        # Wait for ibd to finish
+        time.sleep(1)
 
         # start a miner thread
         miner_public_key = lookup_public_key(name)
