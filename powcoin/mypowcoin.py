@@ -246,7 +246,6 @@ class Node:
         found_in_chain = block in self.blocks
         found_in_branch = self.find_in_branch(block.id)[0] is not None
         if found_in_chain or found_in_branch:
-            logger.info(f"Received duplicate block EXCEPT")
             raise Exception("Received duplicate block")
 
         # Lookup the previous blocks
@@ -287,7 +286,6 @@ class Node:
                     {len(self.branches[-1]) -1}")
         else:
             self.sync()
-            logger.info(f"Encountered block with unknown parent EXCEPT")
             raise Exception("Encountered block with unknown parent, syncing...")
 
         # Block propagation
