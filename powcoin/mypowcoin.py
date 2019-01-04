@@ -144,6 +144,7 @@ class Node:
         self.peers = []
         self.pending_peers = []
         self.address = address
+        self.syncing = False
 
     def connect(self, peer):
         if peer not in self.peers and peer != self.address:
@@ -155,10 +156,13 @@ class Node:
                 logger.info(f'(handshake) Node {peer[0]} offline')
 
     def sync(self):
+        self.syncing = True
         blocks = self.blocks[-GET_BLOCK_CHUNKS:]
         block_ids = [block.id for block in blocks]
-        for peer in self.peers:
-            send_message(peer, "sync", block_ids)
+        #for peer in self.peers:
+        #    send_message(peer, "sync", block_ids)
+        if len(self.peers):
+            send_message(self.peers[0], "sync", block_ids)
 
     def connect_tx(self, tx):
         if not tx.is_coinbase:
@@ -289,8 +293,9 @@ class Node:
             raise Exception("Encountered block with unknown parent, syncing...")
 
         # Block propagation
-        for peer in self.peers:
-            disrupt(func = send_message, args = [peer, "blocks", [block]])
+        if not self.syncing:
+            for peer in self.peers:
+                disrupt(func = send_message, args = [peer, "blocks", [block]])
 
     def reorg(self, branch, branch_index):
         # Disconnect to fork block, preserving as a branch
@@ -562,6 +567,8 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
             if len(data) == GET_BLOCK_CHUNKS:
                 node.sync()
+            else:
+                node.syncing = False
 
         if command == "utxos":
             balance = node.fetch_utxos(data)
@@ -608,7 +615,7 @@ def main(args):
     threading.current_thread().name = "main"
     if args["serve"]:
         name = os.environ["NAME"]
-        duration = 10 * ["node0", "node1", "node2"].index(name)
+        duration = 30 * ["node0", "node1", "node2"].index(name)
         time.sleep(duration)
 
         global node
